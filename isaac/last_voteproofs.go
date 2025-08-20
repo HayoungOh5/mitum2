@@ -167,7 +167,7 @@ func (l *LastVoteproofsHandler) Set(vp base.Voteproof) bool {
 	}
 
 	if lvps.Cap() != nil {
-		l.cache.Set(vp.Point().String(), lvps, 0)
+		l.cache.Set(vp.Point().String(), l.last, 0)
 	}
 
 	return true
@@ -201,7 +201,7 @@ func (l *LastVoteproofsHandler) ForceSetLast(vp base.Voteproof) bool {
 	}
 
 	if lvps.Cap() != nil {
-		l.cache.Set(vp.Point().String(), lvps, 0)
+		l.cache.Set(vp.Point().String(), l.last, 0)
 	}
 
 	return true
