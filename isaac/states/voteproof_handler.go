@@ -487,7 +487,12 @@ func (st *voteproofHandler) newINITVoteproofWithLastINITVoteproof(
 	case ivp.Result() != base.VoteResultMajority: // NOTE new init voteproof has same height, but higher round
 		l.Debug().Msg("new init voteproof draw; moves to next round")
 
-		go st.nextRound(ivp, lvps.PreviousBlockForNextRound(ivp))
+		prevBlockHash := lvps.PreviousBlockForNextRound(ivp)
+		if prevBlockHash == nil {
+			return newSyncingSwitchContextWithVoteproof(st.stt, ivp)
+		} else {
+			go st.nextRound(ivp, prevBlockHash)
+		}
 
 		return nil
 	}
