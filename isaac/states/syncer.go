@@ -51,7 +51,7 @@ func NewSyncerArgs() SyncerArgs {
 			return errors.Errorf("nothing happened")
 		},
 		BatchLimit:           33, //nolint:gomnd // big enough size
-		LastBlockMapInterval: time.Second * 2,
+		LastBlockMapInterval: 100 * time.Millisecond,
 		LastBlockMapTimeout:  isaac.DefaultTimeoutRequest,
 	}
 }
