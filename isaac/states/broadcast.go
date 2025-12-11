@@ -10,6 +10,7 @@ import (
 	"github.com/ProtoconNet/mitum2/base"
 	"github.com/ProtoconNet/mitum2/isaac"
 	"github.com/ProtoconNet/mitum2/util"
+	"github.com/ProtoconNet/mitum2/util/hint"
 	"github.com/pkg/errors"
 )
 
@@ -17,6 +18,7 @@ var (
 	timerIDBroadcastINITBallot            = util.TimerID("broadcast-init-ballot")
 	timerIDBroadcastSuffrageConfirmBallot = util.TimerID("broadcast-suffrage-confirm-ballot")
 	timerIDBroadcastACCEPTBallot          = util.TimerID("broadcast-accept-ballot")
+	EmptyProposalINITBallotFactHint       = hint.MustNewHint("empty-proposal-init-ballot-fact-v0.0.1")
 )
 
 type ballotBroadcastTimers struct {
@@ -156,6 +158,7 @@ func (bbt *ballotBroadcastTimers) addTimer(
 	intervalf func(uint64) time.Duration,
 	timerIDs []util.TimerID,
 ) error {
+
 	point := bl.Point()
 
 	ti := bbt.timerID(bl)
@@ -167,11 +170,15 @@ func (bbt *ballotBroadcastTimers) addTimer(
 		return errors.Errorf("already added")
 	}
 
+	fact := bl.SignFact().Fact()
+
 	if _, err := bbt.timers.New(
 		ti,
 		func(t uint64) time.Duration {
-			if strings.HasPrefix(ti.String(), "broadcast-init-ballot/") && !strings.Contains(ti.String(), "round=0") {
-				return time.Duration(bbt.broadcastTimerMult()) * intervalf(t)
+			if h, ok := fact.(interface{ Hint() hint.Hint }); ok {
+				if h.Hint().Equal(EmptyProposalINITBallotFactHint) {
+					return time.Duration(bbt.broadcastTimerMult()) * intervalf(t)
+				}
 			}
 			return intervalf(t)
 		},
