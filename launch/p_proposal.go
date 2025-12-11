@@ -583,44 +583,58 @@ func requestFuncOfBaseProposalSelectorArgs(pctx context.Context, args *isaac.Bas
 			m,
 			33, //nolint:gomnd //...
 			func(node quicmemberlist.Member) bool {
-				switch {
-				case node.Address().Equal(local.Address()):
-					return true
-				default:
-					return false
-				}
+				return node.Address().Equal(local.Address())
 			},
 		)
 		if err != nil {
 			return nil, false, err
 		}
 
-		var foundproposer bool
-
-		cis := make([]quicstream.ConnInfo, len(members))
+		var (
+			foundproposer bool
+			proposerConn  quicstream.ConnInfo
+		)
 
 		for i := range members {
-			if !foundproposer && members[i].Address().Equal(proposer.Address()) {
+			if members[i].Address().Equal(proposer.Address()) {
 				foundproposer = true
+				proposerConn = members[i].ConnInfo()
+				break
 			}
+		}
 
+		if foundproposer {
+			cis := []quicstream.ConnInfo{proposerConn}
+
+			nctx, cancel := context.WithTimeout(ctx, params.Network.TimeoutRequest())
+			defer cancel()
+
+			return isaac.ConcurrentRequestProposal(
+				nctx,
+				point,
+				proposer,
+				previousBlock,
+				client,
+				cis, // proposer only
+				params.ISAAC.NetworkID(),
+			)
+		}
+
+		cis := make([]quicstream.ConnInfo, len(members))
+		for i := range members {
 			cis[i] = members[i].ConnInfo()
 		}
 
+		m.Members(func(node quicmemberlist.Member) bool {
+			if node.Address().Equal(proposer.Address()) {
+				cis = append(cis, node.ConnInfo())
+				return false
+			}
+			return true
+		})
+
 		if len(cis) < 1 {
 			return nil, false, errors.Errorf("no alive members")
-		}
-
-		if !foundproposer { // NOTE include proposer conn info
-			m.Members(func(node quicmemberlist.Member) bool {
-				if node.Address().Equal(proposer.Address()) {
-					cis = append(cis, node.ConnInfo()) //nolint:makezero //...
-
-					return false
-				}
-
-				return true
-			})
 		}
 
 		nctx, cancel := context.WithTimeout(ctx, params.Network.TimeoutRequest())
@@ -636,6 +650,5 @@ func requestFuncOfBaseProposalSelectorArgs(pctx context.Context, args *isaac.Bas
 			params.ISAAC.NetworkID(),
 		)
 	}
-
 	return nil
 }
