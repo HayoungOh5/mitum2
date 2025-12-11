@@ -34,6 +34,14 @@ var (
 	ensureBroadcastMessageHeaderPrefix   = []byte("memberlist-ensure-message")
 )
 
+type CheckablePool interface {
+	HasOperation(ctx context.Context, id string) (bool, error)
+}
+
+type Deduplicator interface {
+	Exists(key string) bool
+}
+
 type MemberlistArgs struct {
 	Encoder                           encoder.Encoder
 	Config                            *memberlist.Config
@@ -1302,12 +1310,24 @@ func RandomAliveMembers(
 func FetchCallbackBroadcastMessageFunc(
 	handlerPrefix quicstream.HandlerPrefix,
 	dialf quicstreamheader.DialFunc,
+	oppool CheckablePool,
+	dedupCache Deduplicator,
 ) func(context.Context, ConnInfoBroadcastMessage) (
 	[]byte, encoder.Encoder, error,
 ) {
 	return func(ctx context.Context, m ConnInfoBroadcastMessage) (
 		b []byte, enc encoder.Encoder, _ error,
 	) {
+		if dedupCache.Exists(m.ID()) {
+			return nil, nil, nil
+		}
+
+		found, _ := oppool.HasOperation(ctx, m.ID())
+
+		if found {
+			return nil, nil, nil
+		}
+
 		stream, _, err := dialf(ctx, m.ConnInfo())
 		if err != nil {
 			return nil, nil, err

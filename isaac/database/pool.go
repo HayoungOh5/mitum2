@@ -1084,6 +1084,17 @@ func (db *TempPool) setOpCache(op base.Operation) {
 	db.opcache.Set(op.Hash().String(), op, 0)
 }
 
+func (db *TempPool) HasOperation(
+	ctx context.Context,
+	id string,
+) (bool, error) {
+	if db.opcache == nil {
+		return false, nil
+	}
+
+	return db.opcache.Exists(id), nil
+}
+
 func newNewOperationLeveldbKeys(op util.Hash) (key []byte, orderedkey []byte) {
 	return leveldbNewOperationKey(op), leveldbNewOperationOrderedKey(op)
 }

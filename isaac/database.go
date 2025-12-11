@@ -117,6 +117,7 @@ type NewOperationPool interface {
 		filter func(PoolOperationRecordMeta) (ok bool, err error),
 	) ([][2]util.Hash, error)
 	SetOperation(context.Context, base.Operation) (bool, error)
+	HasOperation(context.Context, string) (bool, error)
 }
 
 type TempSyncPool interface {
