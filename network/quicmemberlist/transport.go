@@ -64,7 +64,7 @@ func NewTransport(
 		}),
 		laddr:    laddr,
 		args:     args,
-		packetch: make(chan *memberlist.Packet),
+		packetch: make(chan *memberlist.Packet, 4096),
 		streamch: make(chan net.Conn),
 		conns:    conns,
 		getconninfof: func(addr *net.UDPAddr) (quicstream.ConnInfo, error) {
@@ -351,22 +351,16 @@ func (t *Transport) receivePacket(b []byte, raddr net.Addr) {
 		return
 	}
 
-	donech := make(chan struct{})
-
-	go func() {
-		t.packetch <- &memberlist.Packet{
-			Buf:       b,
-			From:      raddr,
-			Timestamp: time.Now(),
-		}
-
-		donech <- struct{}{}
-	}()
+	packet := &memberlist.Packet{
+		Buf:       b,
+		From:      raddr,
+		Timestamp: time.Now(),
+	}
 
 	select {
-	case <-time.After(time.Second * 2):
-		t.Log().Warn().Interface("remote", raddr).Msg("receive packet blocked")
-	case <-donech:
+	case t.packetch <- packet:
+	default:
+		t.Log().Warn().Stringer("remote", raddr).Msg("packet queue full, dropped")
 	}
 }
 
