@@ -14,12 +14,14 @@ import (
 )
 
 type baseVoteproofJSONMarshaler struct {
-	FinishedAt time.Time                     `json:"finished_at"`
-	Majority   util.Hash                     `json:"majority"`
-	ID         string                        `json:"id"`
-	SignFacts  []base.BallotSignFact         `json:"sign_facts"`
-	Expels     []base.SuffrageExpelOperation `json:"expels,omitempty"`
-	Point      base.StagePoint               `json:"point"`
+	FinishedAt   time.Time                     `json:"finished_at"`
+	Majority     util.Hash                     `json:"majority"`
+	ID           string                        `json:"id"`
+	MajorityFact base.BallotFact               `json:"majority_fact,omitempty"`
+	Signatures   []base.BaseNodeSign           `json:"signatures,omitempty"`
+	SignFacts    []base.BallotSignFact         `json:"sign_facts"`
+	Expels       []base.SuffrageExpelOperation `json:"expels,omitempty"`
+	Point        base.StagePoint               `json:"point"`
 	hint.BaseHinter
 	Threshold base.Threshold `json:"threshold"`
 }
@@ -30,15 +32,37 @@ func (vp baseVoteproof) jsonMarshaller() baseVoteproofJSONMarshaler {
 		majority = vp.majority.Hash()
 	}
 
-	return baseVoteproofJSONMarshaler{
+	m := baseVoteproofJSONMarshaler{
 		BaseHinter: vp.BaseHinter,
 		FinishedAt: vp.finishedAt,
 		Majority:   majority,
 		Point:      vp.point,
 		Threshold:  vp.threshold,
-		SignFacts:  vp.sfs,
 		ID:         vp.id,
 	}
+
+	if vp.majority != nil {
+		m.MajorityFact = vp.majority
+		signatures := make([]base.BaseNodeSign, 0, len(vp.sfs))
+		for _, sf := range vp.sfs {
+			ns := sf.NodeSigns()
+			if len(ns) > 0 {
+				switch t := ns[0].(type) {
+				case base.BaseNodeSign:
+					signatures = append(signatures, t)
+				case *base.BaseNodeSign:
+					if t != nil {
+						signatures = append(signatures, *t)
+					}
+				}
+			}
+		}
+		m.Signatures = signatures
+	} else {
+		m.SignFacts = vp.sfs
+	}
+
+	return m
 }
 
 func (vp baseVoteproof) MarshalJSON() ([]byte, error) {
@@ -74,13 +98,15 @@ func (vp ACCEPTStuckVoteproof) MarshalJSON() ([]byte, error) {
 }
 
 type baseVoteproofJSONUnmarshaler struct {
-	FinishedAt localtime.Time        `json:"finished_at"`
-	ID         string                `json:"id"`
-	Majority   valuehash.HashDecoder `json:"majority"`
-	SignFacts  []json.RawMessage     `json:"sign_facts"`
-	Expels     []json.RawMessage     `json:"expels"`
-	Point      base.StagePoint       `json:"point"`
-	Threshold  base.Threshold        `json:"threshold"`
+	FinishedAt   localtime.Time        `json:"finished_at"`
+	ID           string                `json:"id"`
+	Majority     valuehash.HashDecoder `json:"majority"`
+	MajorityFact json.RawMessage       `json:"majority_fact"`
+	Signatures   []json.RawMessage     `json:"signatures"`
+	SignFacts    []json.RawMessage     `json:"sign_facts"`
+	Expels       []json.RawMessage     `json:"expels"`
+	Point        base.StagePoint       `json:"point"`
+	Threshold    base.Threshold        `json:"threshold"`
 }
 
 func (vp *baseVoteproof) decodeJSON(b []byte, enc encoder.Encoder) (u baseVoteproofJSONUnmarshaler, _ error) {
@@ -92,19 +118,64 @@ func (vp *baseVoteproof) decodeJSON(b []byte, enc encoder.Encoder) (u baseVotepr
 
 	majority := u.Majority.Hash()
 
-	vp.sfs = make([]base.BallotSignFact, len(u.SignFacts))
-
-	for i := range u.SignFacts {
-		if err := encoder.Decode(enc, u.SignFacts[i], &vp.sfs[i]); err != nil {
-			return u, e.Wrap(err)
+	if len(u.MajorityFact) > 0 && string(u.MajorityFact) != "null" {
+		var commonFact base.BallotFact
+		if err := encoder.Decode(enc, u.MajorityFact, &commonFact); err != nil {
+			return u, e.Wrap(errors.WithMessage(err, "decode majority_fact"))
 		}
 
-		sfs := vp.sfs[i]
+		var isInit bool
+		var initFact base.INITBallotFact
+		var acceptFact base.ACCEPTBallotFact
 
-		if majority != nil { // NOTE find in SignFacts
-			if sfs.Fact().Hash().Equal(majority) {
-				if fact, ok := sfs.Fact().(base.BallotFact); ok {
-					vp.majority = fact
+		switch f := commonFact.(type) {
+		case base.INITBallotFact:
+			isInit = true
+			initFact = f
+		case base.ACCEPTBallotFact:
+			isInit = false
+			acceptFact = f
+		default:
+			return u, e.Wrap(errors.Errorf("unknown majority fact type: %T", commonFact))
+		}
+
+		vp.sfs = make([]base.BallotSignFact, len(u.Signatures))
+		for i, rawSig := range u.Signatures {
+			var ns base.BaseNodeSign
+			if err := ns.DecodeJSON(rawSig, enc); err != nil {
+				return u, e.Wrap(errors.WithMessagef(err, "decode signature at index %d", i))
+			}
+
+			if isInit {
+				sf := NewINITBallotSignFact(initFact)
+				sf.sign = ns
+				vp.sfs[i] = sf
+			} else {
+				sf := NewACCEPTBallotSignFact(acceptFact)
+				sf.sign = ns
+				vp.sfs[i] = sf
+			}
+		}
+
+		if majority != nil {
+			if commonFact.Hash().Equal(majority) {
+				vp.majority = commonFact
+			}
+		}
+
+	} else if len(u.SignFacts) > 0 {
+		vp.sfs = make([]base.BallotSignFact, len(u.SignFacts))
+
+		for i := range u.SignFacts {
+			if err := encoder.Decode(enc, u.SignFacts[i], &vp.sfs[i]); err != nil {
+				return u, e.Wrap(err)
+			}
+			if majority != nil && vp.majority == nil {
+				sfs := vp.sfs[i]
+				if sfs.Fact().Hash().Equal(majority) {
+					if fact, ok := sfs.Fact().(base.BallotFact); ok {
+						vp.majority = fact
+					}
 				}
 			}
 		}
